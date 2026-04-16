@@ -55,9 +55,6 @@ def train_bpe(
     input_path: str, vocab_size: int, special_tokens: list[str]
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     # read data, separate them by special tokens and decode it as utf-8 words for pre-tokenization to different words
-    # with open(input_path, "rb") as f:
-    #     data = f.read()
-    #     text = data.decode("utf-8", errors="ignore")
     with open(input_path, encoding="utf-8", errors="ignore") as f:
         text = f.read()
         pattern = "|".join(map(re.escape, special_tokens))
@@ -65,32 +62,41 @@ def train_bpe(
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
         # get all words after pre-tokenization
-        allwords = []
+        allwords_count_dict = {}
+        allwords_token = []
         for doc in docs:
-            words = re.findall(PAT, doc)
-            allwords.extend(words)
-        # print(allwords)
+            for iter in re.finditer(PAT, doc):
+                word_bytes = iter.group().encode("utf-8")
+                # print(word_tokens)
+                allwords_count_dict[word_bytes] = allwords_count_dict.get(word_bytes, 0) + 1
+
+        for word_bytes in allwords_count_dict.keys():
+            allwords_token.append(list(word_bytes))
         # change all words to bytes and then to tokens
-        allwords_tokens = [list(word.encode("utf-8")) for word in allwords]
-        # print(allwords_tokens)
+        # TODO: optimizing for parallel
+
         # tokens_to_bytes dict and BPE merges list
         tokens_to_bytes = {idx: bytes([idx]) for idx in range(256)}
         merges_list = []
+        len_special_tokens = len(special_tokens)
 
-        num_merges = vocab_size - len(special_tokens) - 256
+        num_merges = vocab_size - len_special_tokens - 256
+
+        # count the frequency of adjacent bytes
+        bytes_count_dict = {}
+        for word_bytes in allwords_count_dict.keys():
+            word_tokens = list(word_bytes)
+            for token1, token2 in zip(word_tokens, word_tokens[1:]):
+                bytes_count_dict[(token1, token2)] = (
+                    bytes_count_dict.get((token1, token2), 0) + allwords_count_dict[word_bytes]
+                )
 
         # iterate num_merges times to merge bytes
-        for _ in range(num_merges):
-            bytes_count_dict = {}
-            for word_tokens in allwords_tokens:
-                # this is more memory efficient because do not create another slice of word_tokens list
-                for token1, token2 in zip(word_tokens, word_tokens[1:]):
-                    bytes_count_dict[(token1, token2)] = bytes_count_dict.get((token1, token2), 0) + 1
+        for i in range(num_merges):
             # if not finding any adjacent bytes pair, break the merges
             if not bytes_count_dict:
                 break
             else:
-                # merge_pair = max(bytes_count_dict, key=bytes_count_dict.get)
                 merge_pair = max(
                     bytes_count_dict,
                     key=lambda pair: (bytes_count_dict[pair], tokens_to_bytes[pair[0]], tokens_to_bytes[pair[1]]),
@@ -98,14 +104,15 @@ def train_bpe(
 
             # add the merge_pair to the merges_list
             merges_list.append((tokens_to_bytes[merge_pair[0]], tokens_to_bytes[merge_pair[1]]))
-            new_token_id = len(tokens_to_bytes)
+            new_token_id = i + 256
             tokens_to_bytes[new_token_id] = tokens_to_bytes[merge_pair[0]] + tokens_to_bytes[merge_pair[1]]
 
             # replace the new token back to the original words
-            new_allwords_tokens = []
-            for word_tokens in allwords_tokens:
+            new_allwords_token = []
+            for word_tokens in allwords_token:
                 new_word_tokens = []
                 index = 0
+                change = False
                 while index < len(word_tokens):
                     if (
                         index < len(word_tokens) - 1
@@ -114,15 +121,25 @@ def train_bpe(
                     ):
                         new_word_tokens.append(new_token_id)
                         index += 2
+                        change = True
                     else:
                         new_word_tokens.append(word_tokens[index])
                         index += 1
-                new_allwords_tokens.append(new_word_tokens)
-            allwords_tokens = new_allwords_tokens
+                new_allwords_token.append(new_word_tokens)
+                if change:
+                    original_word = b"".join(tokens_to_bytes[t] for t in word_tokens)
+                    for token1, token2 in zip(word_tokens, word_tokens[1:]):
+                        bytes_count_dict[(token1, token2)] -= allwords_count_dict[original_word]
+                    for token1, token2 in zip(new_word_tokens, new_word_tokens[1:]):
+                        bytes_count_dict[(token1, token2)] = (
+                            bytes_count_dict.get((token1, token2), 0) + allwords_count_dict[original_word]
+                        )
+            allwords_token = new_allwords_token
 
         # add the special tokens back into the vocab
-        for special_token in special_tokens:
-            tokens_to_bytes[len(tokens_to_bytes)] = special_token.encode("utf-8")
+        for i in range(len_special_tokens):
+            new_token_id = vocab_size - len_special_tokens
+            tokens_to_bytes[i + new_token_id] = special_tokens[i].encode("utf-8")
 
         # print(tokens_to_bytes)
         # print(merges_list)
