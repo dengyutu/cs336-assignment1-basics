@@ -29,7 +29,7 @@ class Tokenizer:
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
         with open(vocab_filepath) as f:
             vocab_str = json.load(f)
-            vocab = {int(k): v.encode("utf-8") for k, v in vocab_str.items()}
+            vocab = {int(k): ast.literal_eval(v) for k, v in vocab_str.items()}
         with open(merges_filepath) as f:
             merges = []
             lines = f.read().splitlines()
@@ -41,6 +41,11 @@ class Tokenizer:
                     byte1 = ast.literal_eval(parts[0])
                     byte2 = ast.literal_eval(parts[1])
                     merges.append((byte1, byte2))
+        if special_tokens:
+            for special_token in special_tokens:
+                byte_encoded_special_tokens = special_token.encode("utf-8")
+                if byte_encoded_special_tokens not in set(vocab.values()):
+                    vocab[len(vocab)] = byte_encoded_special_tokens
         return cls(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:

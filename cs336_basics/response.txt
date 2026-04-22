@@ -1,0 +1,21 @@
+Problem (tokenizer_experiments)
+
+(a)
+The average compression ratio (bytes/token) for TinyStories is 4.098722351411519
+The average compression ratio (bytes/token) for OpenWebText is 4.4121700129953485
+
+(b)
+The average compression ratio (bytes/token) for TinyStories Toknizer on OpenWebText is 3.129677693646795. This value is lower because there are
+many vocabs in OpenWebText that TinyStories have never seen before which makes the Toknizer to spend more tokens to encode them.
+
+(c)
+the tokenizer_throughput for TinyStories is 462526.62 bytes/second
+it take to 1783681.14 seconds to tokenize the Pile dataset
+the tokenizer_throughput for OpenWebText is 300385.33 bytes/second
+it take to 2746472.38 seconds to tokenize the Pile dataset
+
+(d)
+uint16 can represent values 0–65535, which covers both your 10K and 32K vocabulary sizes. Python's built-in int is an arbitrary-precision object
+that uses 28+ bytes per integer, whereas uint16 uses exactly 2 bytes. When wer're storing millions of token IDs, that difference is enormous.
+NumPy arrays with a fixed dtype also store values contiguously in memory with no per-element overhead, which is what makes them efficient for
+serialization and later loading during training.

@@ -77,7 +77,7 @@ def train_bpe(
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     # read data, separate them by special tokens and decode it as utf-8 words for pre-tokenization to different words
     with open(input_path, "rb") as f:
-        num_processes = os.cpu_count()
+        num_processes = 8  # os.cpu_count()
         boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
 
         chunk_args = []
