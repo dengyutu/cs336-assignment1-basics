@@ -161,3 +161,11 @@ cython_debug/
 
 .ruff_cache/
 *.zip
+
+# Custom / Project Specific
+cs336_spring2025_assignment1_basics.pdf
+.DS_Store
+.vscode/
+data/
+scalene-profile.*
+CLAUDE.md
