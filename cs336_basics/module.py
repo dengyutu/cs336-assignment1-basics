@@ -1,5 +1,3 @@
-import math
-
 import torch
 from einops import einsum
 from torch import nn
@@ -80,24 +78,19 @@ class RotaryPositionalEmbedding(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None):
         super().__init__()
         assert d_k % 2 == 0, "d_k must be even"
-        half_d_k = int(d_k / 2)
-        self.register_buffer(name="cosin_buffer", tensor=torch.empty(size=(max_seq_len, half_d_k)), persistent=False)
-        self.register_buffer(name="sin_buffer", tensor=torch.empty(size=(max_seq_len, half_d_k)), persistent=False)
-        for i in range(max_seq_len):
-            for j in range(half_d_k):
-                angle = i / theta ** (j * 2 / d_k)
-                self.cosin_buffer[i, j] = math.cos(angle)
-                self.sin_buffer[i, j] = math.sin(angle)
+        freqs = theta ** -(torch.arange(0, d_k, 2, device=device, dtype=torch.float32) / d_k)
+        positions = torch.arange(0, max_seq_len, device=device, dtype=torch.float32)
+        angle = positions.unsqueeze(1) @ freqs.unsqueeze(0)
+        # angles = torch.outer(positions, freqs)
+        self.register_buffer(name="cosin_buffer", tensor=torch.cos(angle), persistent=False)
+        self.register_buffer(name="sin_buffer", tensor=torch.sin(angle), persistent=False)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
-        seq_len = x.shape[-2]
-        d_k = x.shape[-1]
-        half_d_k = int(d_k / 2)
-        output = torch.empty_like(x)
-        for i in range(seq_len):
-            for j in range(half_d_k):
-                cos = self.cosin_buffer[token_positions[..., i], j]
-                sin = self.sin_buffer[token_positions[..., i], j]
-                output[..., i, j * 2] = x[..., i, j * 2] * cos - x[..., i, j * 2 + 1] * sin
-                output[..., i, j * 2 + 1] = x[..., i, j * 2] * sin + x[..., i, j * 2 + 1] * cos
-        return output
+        cos = self.cosin_buffer[token_positions]
+        sin = self.sin_buffer[token_positions]
+        x_even = x[..., 0::2]
+        x_odd = x[..., 1::2]
+        r_even = x_even * cos - x_odd * sin
+        r_odd = x_even * sin + x_odd * cos
+        out = torch.stack((r_even, r_odd), dim=-1).flatten(-2)
+        return out
