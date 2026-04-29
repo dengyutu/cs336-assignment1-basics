@@ -9,6 +9,7 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
+from cs336_basics.module import Embedding, Linear, RMSNorm, RotaryPositionalEmbedding, Swiglu
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.train_bpe import train_bpe
 
@@ -31,6 +32,9 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
+    linear_layer = Linear(in_feature=d_in, out_feature=d_out)
+    linear_layer.load_state_dict({"weight": weights})
+    return linear_layer(in_features)
 
     raise NotImplementedError
 
@@ -53,6 +57,10 @@ def run_embedding(
     Returns:
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
+
+    embedding_layer = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+    embedding_layer.load_state_dict({"weight": weights})
+    return embedding_layer(token_ids)
 
     raise NotImplementedError
 
@@ -86,6 +94,10 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
+    swiglu_layer = Swiglu(d_ff=d_ff, d_model=d_model)
+    weights = {"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight}
+    swiglu_layer.load_state_dict(weights)
+    return swiglu_layer(in_features)
     raise NotImplementedError
 
 
@@ -203,6 +215,8 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
+    rope_layer = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
+    return rope_layer(in_query_or_key, token_positions)
     raise NotImplementedError
 
 
@@ -381,6 +395,9 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
+    rmsnorm_layer = RMSNorm(d_model=d_model, eps=eps)
+    rmsnorm_layer.load_state_dict({"weight": weights})
+    return rmsnorm_layer(in_features)
     raise NotImplementedError
 
 

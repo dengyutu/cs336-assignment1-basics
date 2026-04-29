@@ -5,7 +5,7 @@ import os
 import pathlib
 from functools import lru_cache
 
-from tokenizer import Tokenizer
+from cs336_basics.tokenizer import Tokenizer
 
 
 def get_tokenizer_from_vocab_merges_path(
