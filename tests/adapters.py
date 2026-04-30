@@ -9,9 +9,10 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
-from cs336_basics.module import Embedding, Linear, RMSNorm, RotaryPositionalEmbedding, Swiglu
+from cs336_basics.module import Embedding, Linear, Multihead_self_attention, RMSNorm, RotaryPositionalEmbedding, Swiglu
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.train_bpe import train_bpe
+from cs336_basics.utils import scaled_dot_product_attention, softmax
 
 
 def run_linear(
@@ -119,6 +120,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
+    return scaled_dot_product_attention(Q=Q, K=K, V=V, mask=mask)
     raise NotImplementedError
 
 
@@ -153,6 +155,15 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
+    multihead_self_attention_layer = Multihead_self_attention(d_model=d_model, num_heads=num_heads)
+    weights = {
+        "W_Q.weight": q_proj_weight,
+        "W_K.weight": k_proj_weight,
+        "W_V.weight": v_proj_weight,
+        "W_O.weight": o_proj_weight,
+    }
+    multihead_self_attention_layer.load_state_dict(weights)
+    return multihead_self_attention_layer(in_features)
     raise NotImplementedError
 
 
@@ -193,6 +204,17 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
+    d_k = d_model // num_heads
+    rope_layer = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
+    multihead_self_attention_layer = Multihead_self_attention(d_model=d_model, num_heads=num_heads, RoPE=rope_layer)
+    weights = {
+        "W_Q.weight": q_proj_weight,
+        "W_K.weight": k_proj_weight,
+        "W_V.weight": v_proj_weight,
+        "W_O.weight": o_proj_weight,
+    }
+    multihead_self_attention_layer.load_state_dict(weights)
+    return multihead_self_attention_layer(in_features, token_positions)
     raise NotImplementedError
 
 
@@ -451,6 +473,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
+    return softmax(x=in_features, dim=dim)
     raise NotImplementedError
 
 

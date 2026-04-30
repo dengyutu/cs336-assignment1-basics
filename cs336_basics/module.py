@@ -1,6 +1,8 @@
 import torch
-from einops import einsum
+from einops import einsum, rearrange
 from torch import nn
+
+from cs336_basics.utils import scaled_dot_product_attention
 
 
 class Linear(nn.Module):
@@ -93,4 +95,64 @@ class RotaryPositionalEmbedding(nn.Module):
         r_even = x_even * cos - x_odd * sin
         r_odd = x_even * sin + x_odd * cos
         out = torch.stack((r_even, r_odd), dim=-1).flatten(-2)
+        return out
+
+
+class Multihead_self_attention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        RoPE: RotaryPositionalEmbedding | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.d_v = self.d_k
+
+        self.W_Q = Linear(in_feature=d_model, out_feature=d_model, device=device, dtype=dtype)
+        self.W_K = Linear(in_feature=d_model, out_feature=d_model, device=device, dtype=dtype)
+        self.W_V = Linear(in_feature=d_model, out_feature=d_model, device=device, dtype=dtype)
+        self.W_O = Linear(in_feature=d_model, out_feature=d_model, device=device, dtype=dtype)
+        self.RoPE = RoPE
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        q_proj = self.W_Q(x)
+        k_proj = self.W_K(x)
+        v_proj = self.W_V(x)
+        q_proj_multihead = rearrange(
+            q_proj, "batch ... seq_len (head d_k) -> batch ... head seq_len d_k", head=self.num_heads, d_k=self.d_k
+        )
+        k_proj_multihead = rearrange(
+            k_proj, "batch ... seq_len (head d_k) -> batch ... head seq_len d_k", head=self.num_heads, d_k=self.d_k
+        )
+        v_proj_multihead = rearrange(
+            v_proj, "batch ... seq_len (head d_v) -> batch ... head seq_len d_v", head=self.num_heads, d_v=self.d_v
+        )
+        if self.RoPE is not None:
+            q_proj_multihead = self.RoPE(x=q_proj_multihead, token_positions=token_positions)
+            k_proj_multihead = self.RoPE(x=k_proj_multihead, token_positions=token_positions)
+        seq_len_q = q_proj_multihead.shape[-2]
+        seq_len_k = k_proj_multihead.shape[-2]
+        causal_mask = torch.ones((seq_len_q, seq_len_k), device=x.device, dtype=torch.bool)
+        causal_mask = torch.tril(input=causal_mask, diagonal=0)
+        # another way to create the mask: use comparison broadcasts
+        # a = torch.arange(seq_len_q).unsqueeze(-1)
+        # b = torch.arange(seq_len_k).unsqueeze(0)
+        # mask = (a >= b)
+        attention_multihead = scaled_dot_product_attention(
+            Q=q_proj_multihead, K=k_proj_multihead, V=v_proj_multihead, mask=causal_mask
+        )
+        attention = rearrange(
+            attention_multihead,
+            "batch ... head seq_len d_v -> batch ... seq_len (head d_v)",
+            head=self.num_heads,
+            d_v=self.d_v,
+        )
+        out = self.W_O(attention)
         return out
