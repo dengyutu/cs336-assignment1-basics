@@ -156,12 +156,15 @@ def run_multihead_self_attention(
         implementation with the given QKV projection weights and input features.
     """
     multihead_self_attention_layer = Multihead_self_attention(d_model=d_model, num_heads=num_heads)
-    weights = {
-        "W_Q.weight": q_proj_weight,
-        "W_K.weight": k_proj_weight,
-        "W_V.weight": v_proj_weight,
-        "W_O.weight": o_proj_weight,
-    }
+    # weights = {
+    #     "W_Q.weight": q_proj_weight,
+    #     "W_K.weight": k_proj_weight,
+    #     "W_V.weight": v_proj_weight,
+    #     "W_O.weight": o_proj_weight,
+    # }
+    qkv_proj_weight = torch.cat((q_proj_weight, k_proj_weight, v_proj_weight), dim=0)
+    # o_proj_weight_new = torch.cat((o_proj_weight, o_proj_weight, o_proj_weight), dim=1)
+    weights = {"W_QKV.weight": qkv_proj_weight, "W_O.weight": o_proj_weight}
     multihead_self_attention_layer.load_state_dict(weights)
     return multihead_self_attention_layer(in_features)
     raise NotImplementedError
@@ -207,12 +210,14 @@ def run_multihead_self_attention_with_rope(
     d_k = d_model // num_heads
     rope_layer = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
     multihead_self_attention_layer = Multihead_self_attention(d_model=d_model, num_heads=num_heads, RoPE=rope_layer)
-    weights = {
-        "W_Q.weight": q_proj_weight,
-        "W_K.weight": k_proj_weight,
-        "W_V.weight": v_proj_weight,
-        "W_O.weight": o_proj_weight,
-    }
+    # weights = {
+    #     "W_Q.weight": q_proj_weight,
+    #     "W_K.weight": k_proj_weight,
+    #     "W_V.weight": v_proj_weight,
+    #     "W_O.weight": o_proj_weight,
+    # }
+    qkv_proj_weight = torch.cat((q_proj_weight, k_proj_weight, v_proj_weight), dim=0)
+    weights = {"W_QKV.weight": qkv_proj_weight, "W_O.weight": o_proj_weight}
     multihead_self_attention_layer.load_state_dict(weights)
     return multihead_self_attention_layer(in_features, token_positions)
     raise NotImplementedError
