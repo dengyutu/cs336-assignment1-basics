@@ -135,11 +135,17 @@ class Multihead_self_attention(nn.Module):
             d_k=self.d_k,
         )
         q_proj, k_proj, v_proj = qkv_proj_multihead.unbind(dim=-3)
-        if self.RoPE is not None:
-            q_proj = self.RoPE(q_proj, token_positions=token_positions)
-            k_proj = self.RoPE(k_proj, token_positions=token_positions)
         seq_len_q = q_proj.shape[-2]
         seq_len_k = k_proj.shape[-2]
+        if self.RoPE is not None:
+            if token_positions is None:
+                token_positions_q = torch.arange(0, seq_len_q)
+                token_positions_k = torch.arange(0, seq_len_k)
+            else:
+                token_positions_q = token_positions
+                token_positions_k = token_positions
+            q_proj = self.RoPE(q_proj, token_positions=token_positions_q)
+            k_proj = self.RoPE(k_proj, token_positions=token_positions_k)
         if self.max_seq_len is not None:
             causal_mask = self.causal_mask[:seq_len_q, :seq_len_k]
         else:
@@ -163,3 +169,74 @@ class Multihead_self_attention(nn.Module):
         )
         out = self.W_O(attention)
         return out
+
+
+class Transformer_block(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        RoPE: RotaryPositionalEmbedding | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        max_seq_len: int | None = None,
+        eps: float | None = 1e-5,
+    ):
+        super().__init__()
+        self.attn = Multihead_self_attention(
+            d_model=d_model, num_heads=num_heads, RoPE=RoPE, device=device, dtype=dtype, max_seq_len=max_seq_len
+        )
+        self.ln1 = RMSNorm(d_model=d_model, eps=eps, device=device, dtype=dtype)
+        self.ln2 = RMSNorm(d_model=d_model, eps=eps, device=device, dtype=dtype)
+        self.ffn = Swiglu(d_ff=d_ff, d_model=d_model, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        output_mid = x + self.attn(self.ln1(x))
+        output = output_mid + self.ffn(self.ln2(output_mid))
+        return output
+
+
+class Transformer_lm(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        theta: float,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        eps: float | None = 1e-5,
+    ):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        d_k = d_model // num_heads
+        self.token_embeddings = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, device=device, dtype=dtype)
+        self.RoPE = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=context_length)
+        self.layers = nn.ModuleList(
+            [
+                Transformer_block(
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    d_ff=d_ff,
+                    RoPE=self.RoPE,
+                    device=device,
+                    dtype=dtype,
+                    max_seq_len=context_length,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.ln_final = RMSNorm(d_model=d_model, eps=eps, device=device, dtype=dtype)
+        self.lm_head = Linear(in_feature=d_model, out_feature=vocab_size, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.token_embeddings(x)
+        for i in range(len(self.layers)):
+            x = self.layers[i](x)
+        x = self.ln_final(x)
+        output = self.lm_head(x)
+        return output
