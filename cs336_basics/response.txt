@@ -19,3 +19,95 @@ uint16 can represent values 0–65535, which covers both your 10K and 32K vocabu
 that uses 28+ bytes per integer, whereas uint16 uses exactly 2 bytes. When wer're storing millions of token IDs, that difference is enormous.
 NumPy arrays with a fixed dtype also store values contiguously in memory with no per-element overhead, which is what makes them efficient for
 serialization and later loading during training.
+
+
+Problem (transformer_accounting)
+
+(a)
+Parameters counting for Transformer
+Transformer_block:
+    ln1: d_model
+    ln2: d_model
+    ffn: w1: d_model*d_ff, w2: d_model*d_ff, w3: d_model*d_ff
+    attn: W_QKV: d_model*3*d_model, W_O:d_model*d_model
+Transformer_lm:
+    token_embeddings: vocab_size*d_model
+    Transformer_bloc * num_layers
+    ln_final: d_model
+    lm_head: d_model*vocab_size
+
+Total Parameters = (50257*1600) + 48*(1600*2+1600*6400*3+1600*1600+1600*3*1600) + 1600 + 1600*50257 = 2,127,057,600
+Total Memory size = 2,127,057,600 * 4byte = 8.51GB
+
+(b)
+Computation counting for Transformer
+Transformer_block:
+    ffn: w1: [batch, seq_len, d_model] * [d_model, d_ff]
+         w3: [batch, seq_len, d_model] * [d_model, d_ff]
+         w2: [batch, seq_len, d_ff] * [d_ff, d_model]
+    attn: W_QKV: [batch, seq_len, d_model] * [d_model, 3*d_model]
+          scaled_dot_product_attention: [batch, head, seq_len_q, d_k] * [batch, head, seq_len_k, d_k]
+                                        [batch, head, seq_len_q, seq_len_k] * [batch, head, seq_len_k, d_v]
+          W_O: [batch, seq_len, d_model] * [d_model, d_model]
+Transformer_lm:
+    Transformer_bloc * num_layers
+    lm_head: [batch, seq_len, d_model] * [d_model, vocab_size]
+
+Total number of FLOPs:
+attn: (2*1024*1600*3*1600) + (2*1600/25*1024*1024)*25 + (2*1024*1024*1600/25)*25 + (2*1024*1600*1600) = 27,682,406,400
+ffn: (2*1024*1600*6400)*3 = 62,914,560,000
+lm_head: (2*1024*1600*50257) = 164,682,137,600
+Total = (27,682,406,400+62,914,560,000)*48+164,682,137,600 = 4,513,215,692,800
+
+(c)
+Total = 4513336524800
+W_QKV/Total = 0.16727640756490128
+QK/Total = 0.03568563361384561
+attn/Total = 0.03568563361384561
+W_O/Total = 0.05575880252163376
+SwiGLU/Total = 0.6691056302596051
+LM/Total = 0.036487892426168594
+The FFN (SwiGLU) is the dominant cost center at ~2/3 of all FLOPs
+
+(d)
+GPT-2 small (12 layers, 768 d_model, 12 heads)
+Total = 349630365696
+W_QKV/Total = 0.12437862422342086
+QK/Total = 0.055279388543742605
+attn/Total = 0.055279388543742605
+W_O/Total = 0.04145954140780696
+SwiGLU/Total = 0.49751449689368343
+LM/Total = 0.22608856038760353
+
+GPT-2 medium (24layers, 1024 d_model, 16 heads)
+Total = 1033109504000
+W_QKV/Total = 0.14966353717330627
+QK/Total = 0.04988784572443542
+attn/Total = 0.04988784572443542
+W_O/Total = 0.04988784572443542
+SwiGLU/Total = 0.5986541486932251
+LM/Total = 0.1020187769601624
+
+GPT-2 large (36 layers, 1280 d_model, 20 heads)
+Total = 2257754521600
+W_QKV/Total = 0.16050808984458906
+QK/Total = 0.042802157291890415
+attn/Total = 0.042802157291890415
+W_O/Total = 0.053502696614863024
+SwiGLU/Total = 0.6420323593783562
+LM/Total = 0.05835253957841083
+
+SwiGLU FFN dominates and grows, Attention scores (QK and Attn) shrink proportionally,
+LM Head shrinks dramatically, Linear projections (W_QKV, W_O) remain roughly constant:
+
+(e)
+T = 16384
+Total = 149522795724800
+W_QKV/Total = 0.08078765155135784
+QK/Total = 0.2757551839619681
+attn/Total = 0.2757551839619681
+W_O/Total = 0.026929217183785947
+SwiGLU/Total = 0.32315060620543135
+LM/Total = 0.017622157135488675
+
+Q_K and attn increases a lot. SwiGLU shrinks a lot. The percentage becomes very close between Q_K, attn and SwiGLU.

@@ -9,7 +9,16 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
-from cs336_basics.module import Embedding, Linear, Multihead_self_attention, RMSNorm, RotaryPositionalEmbedding, Swiglu
+from cs336_basics.module import (
+    Embedding,
+    Linear,
+    Multihead_self_attention,
+    RMSNorm,
+    RotaryPositionalEmbedding,
+    Swiglu,
+    Transformer_block,
+    Transformer_lm,
+)
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.train_bpe import train_bpe
 from cs336_basics.utils import scaled_dot_product_attention, softmax
@@ -317,6 +326,26 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
+    d_k = d_model // num_heads
+    RoPE = RotaryPositionalEmbedding(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
+    transformer_block = Transformer_block(
+        d_model=d_model, num_heads=num_heads, d_ff=d_ff, max_seq_len=max_seq_len, RoPE=RoPE
+    )
+    qkv_proj_weight = torch.cat(
+        (weights["attn.q_proj.weight"], weights["attn.k_proj.weight"], weights["attn.v_proj.weight"]), dim=0
+    )
+    new_weights = {
+        "attn.W_QKV.weight": qkv_proj_weight,
+        "attn.W_O.weight": weights["attn.output_proj.weight"],
+        "ln1.weight": weights["ln1.weight"],
+        "ln2.weight": weights["ln2.weight"],
+        "ffn.w1.weight": weights["ffn.w1.weight"],
+        "ffn.w2.weight": weights["ffn.w2.weight"],
+        "ffn.w3.weight": weights["ffn.w3.weight"],
+    }
+    transformer_block.load_state_dict(new_weights)
+    return transformer_block(in_features)
+
     raise NotImplementedError
 
 
@@ -399,6 +428,31 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
+    transformer_lm = Transformer_lm(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        vocab_size=vocab_size,
+        context_length=context_length,
+        num_layers=num_layers,
+        theta=rope_theta,
+    )
+    new_weights = {}
+    for key, value in weights.items():
+        # Skip the individual q/k/v proj weights — we'll fuse them
+        if any(proj in key for proj in ["q_proj", "k_proj", "v_proj", "output_proj"]):
+            continue
+        new_weights[key] = value
+
+    for i in range(num_layers):
+        q = weights[f"layers.{i}.attn.q_proj.weight"]
+        k = weights[f"layers.{i}.attn.k_proj.weight"]
+        v = weights[f"layers.{i}.attn.v_proj.weight"]
+        new_weights[f"layers.{i}.attn.W_QKV.weight"] = torch.cat([q, k, v], dim=0)
+        new_weights[f"layers.{i}.attn.W_O.weight"] = weights[f"layers.{i}.attn.output_proj.weight"]
+
+    transformer_lm.load_state_dict(new_weights)
+    return transformer_lm(in_indices)
     raise NotImplementedError
 
 
