@@ -10,6 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.module import (
+    AdamW,
     Embedding,
     Linear,
     Multihead_self_attention,
@@ -21,7 +22,7 @@ from cs336_basics.module import (
 )
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.train_bpe import train_bpe
-from cs336_basics.utils import scaled_dot_product_attention, softmax
+from cs336_basics.utils import cross_entropy, scaled_dot_product_attention, softmax
 
 
 def run_linear(
@@ -551,6 +552,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
+    return cross_entropy(inputs, targets)
     raise NotImplementedError
 
 
@@ -570,6 +572,7 @@ def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
+    return AdamW
     raise NotImplementedError
 
 

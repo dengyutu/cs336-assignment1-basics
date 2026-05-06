@@ -1,7 +1,7 @@
 import math
 
 import torch
-from einops import einsum
+from einops import einsum, reduce
 
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
@@ -25,3 +25,13 @@ def scaled_dot_product_attention(Q: torch.Tensor, K: torch.Tensor, V: torch.Tens
         V,
         "batch_size ... seq_len_q seq_len_k, batch_size ... seq_len_k d_v -> batch_size ... seq_len_q d_v",
     )
+
+
+def cross_entropy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    logits_max = reduce(logits, "... vocab -> ... 1", "max")
+    shifted_logits = logits - logits_max
+    log_sum_exp = torch.log(reduce(torch.exp(shifted_logits), "... vocab -> ... 1", "sum"))
+    target_logits = torch.gather(shifted_logits, -1, targets.unsqueeze(-1))
+
+    loss = log_sum_exp - target_logits
+    return reduce(loss, "... 1 -> ", "mean")

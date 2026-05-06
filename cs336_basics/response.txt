@@ -1,3 +1,5 @@
+Section 2
+
 Problem (tokenizer_experiments)
 
 (a)
@@ -20,6 +22,7 @@ that uses 28+ bytes per integer, whereas uint16 uses exactly 2 bytes. When wer'r
 NumPy arrays with a fixed dtype also store values contiguously in memory with no per-element overhead, which is what makes them efficient for
 serialization and later loading during training.
 
+Section 3
 
 Problem (transformer_accounting)
 
@@ -111,3 +114,160 @@ SwiGLU/Total = 0.32315060620543135
 LM/Total = 0.017622157135488675
 
 Q_K and attn increases a lot. SwiGLU shrinks a lot. The percentage becomes very close between Q_K, attn and SwiGLU.
+
+
+Section 4
+
+Problem (learning_rate_tuning)
+
+lr = 1:
+19.3251895904541
+18.559913635253906
+18.038673400878906
+17.624492645263672
+17.273765563964844
+16.966144561767578
+16.69021987915039
+16.438840866088867
+16.207181930541992
+15.99180793762207
+
+lr = 10:
+30.530193328857422
+19.539323806762695
+14.403554916381836
+11.269243240356445
+9.12808609008789
+7.568230152130127
+6.382797718048096
+5.454282760620117
+4.710202217102051
+4.103109359741211
+
+lr = 100:
+21.530027389526367
+21.5300235748291
+3.693967819213867
+0.08840498328208923
+1.4321876594148046e-16
+1.5962620234342855e-18
+5.3751760092041346e-20
+3.202029277838233e-21
+2.7469078304172103e-22
+3.0521195661512854e-23
+
+lr = 1000:
+28.5036678314209
+10289.8232421875
+1777214.375
+197696096.0
+16013384704.0
+1010628034560.0
+51882340909056.0
+2232200267300864.0
+8.227414441407283e+16
+2.6419139609236603e+18
+
+The loss diverges when the learning rate increases.
+
+
+Problem (adamwAccounting)
+
+(a)
+assumption: 1. assume all activations coexist (as if stored from the full forward pass), or do you account for the
+layer-by-layer freeing
+Transformer block:
+    RMSNorm(s):
+        parameters: d_model * 2 (one before attention and one before ffn)
+        activations: (batch, context_length, d_model) * 2
+        gradients: d_model * 2
+        optimizer state: 2 * d_model * 2
+    Multi-head self-attention sublayer:
+        QKV projections
+            parameters: 3 * (d_model, d_model)
+            activations:  (batch, context_length, head, d_k)
+            gradients: 3 * (d_model, d_model)
+            optimizer state: 2 * 3 * (d_model, d_model)
+        QK matrix multiply
+            parameters: 0
+            activations: 2 * (batch, head, context_length, d_k)
+            gradients: 0
+            optimizer state: 0
+        softmax
+            parameters: 0
+            activations: (batch, head, context_length, context_length)
+            gradients: 0
+            optimizer state: 0
+        weighted sum of values
+            parameters: 0
+            activations: (batch, head, context_length, d_k)
+            gradients: 0
+            optimizer state: 0
+        output projection.
+            parameters: (d_model, d_model)
+            activations: (batch, context_length, d_model)
+            gradients: (d_model, d_model)
+            optimizer state: 2 * (d_model, d_model)
+    Position-wise feed-forward:
+        W1 matrix multiply
+            parameters: (d_ff, d_model)
+            activations: (batch, context_length, d_model)
+            gradients: (d_ff, d_model)
+            optimizer state: 2 * (d_ff, d_model)
+        SiLU
+            parameters: 0
+            activations: (batch, context_length, d_ff)
+            gradients: 0
+            optimizer state: 0
+        W2 matrix multiply
+            parameters: (d_model, d_ff)
+            activations: (batch, context_length, d_ff)
+            gradients: (d_model, d_ff)
+            optimizer state: 2 * (d_model, d_ff)
+final RMSNorm
+    parameters: d_model
+    activations: (batch, context_length, d_model)
+    gradients: d_model
+    optimizer state: 2 * d_model
+output embedding
+    parameters: (vocab_size, d_model)
+    activations: (batch, context_length, d_model)
+    gradients: (vocab_size, d_model)
+    optimizer state: 2 * (vocab_size, d_model)
+cross-entropy on logits
+    parameters: 0
+    activations: (batch, context_length, vocab_size)
+    gradients: 0
+    optimizer state: 0
+
+(b)
+parameters = L * (12 * d**2 + 2 * d) + d + V * d
+gradients = parameters
+optimizer_states = 2 * parameters
+activations = L * (16 * B * T * d + B * H * (T**2)) + 2 * B * T * d + B * T * V
+total = parameters + gradients + optimizer_states + activations
+
+GPT-2 XL (48 layers, 1600 d_model, 25 heads)
+vocab_size : 50,257, context_length : 1,024
+
+Total memory = 4*(2571322368*batch + 6220505600) bytes
+maximum batch size = (80 * 1e9 / 4 - 6220505600) / 2571322368 = 5.36.
+The maximum batch size that fits within 80 GB of memory is 5.
+
+(c)
+m.mul_(beta1).add_(grad, alpha=1 - beta1): two mul + one add
+v.mul_(beta2).addcmul_(grad, grad, value=1 - beta2): three mul + one addition
+lr_t = lr * (1 - beta2**t) ** 0.5 / (1 - beta1**t): very small
+p.data.addcdiv_(m, (torch.sqrt(v) + eps), value=-lr_t): two add + one div + one square root + one mul
+p.data.mul_(1 - lr * weight_decay): one mul
+Total Flops = 13*parameters
+
+(d)
+Estimate from Flops:
+One step total Flops = forward + backward + Optimization = 1024 * 3 * 4513336524800 + 13 * 1555126400 = 13864990020828800
+Total Flops = 13864990020828800 * 400000 = 5545996008331520000000
+Time = 5545996008331520000000/(19.5*1e12*0.5) = 568820103 seconds = 6583.56 days
+
+Estimate from simple Model:
+Total Flops = 6 * (# data points) * (# parameters) = 6 * 1555126400 * 1024 * 1024 = 9784009320038400
+Time = 9784009320038400 * 400000 / (19.5*1e12*0.5) = 401395254 seconds = 4645.78 day
