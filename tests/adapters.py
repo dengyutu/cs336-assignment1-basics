@@ -22,7 +22,16 @@ from cs336_basics.module import (
 )
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.train_bpe import train_bpe
-from cs336_basics.utils import cross_entropy, scaled_dot_product_attention, softmax
+from cs336_basics.utils import (
+    cross_entropy,
+    data_loading,
+    gradient_clipping,
+    learning_rate_schedule,
+    load_checkpoint,
+    save_checkpoint,
+    scaled_dot_product_attention,
+    softmax,
+)
 
 
 def run_linear(
@@ -517,6 +526,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
+    return data_loading(dataset, batch_size, context_length, device)
     raise NotImplementedError
 
 
@@ -565,6 +575,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
+    return gradient_clipping(parameters, max_l2_norm)
     raise NotImplementedError
 
 
@@ -601,6 +612,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
+    return learning_rate_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
     raise NotImplementedError
 
 
@@ -620,6 +632,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
+    return save_checkpoint(model, optimizer, iteration, out)
     raise NotImplementedError
 
 
@@ -641,6 +654,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
+    return load_checkpoint(src, model, optimizer)
     raise NotImplementedError
 
 
