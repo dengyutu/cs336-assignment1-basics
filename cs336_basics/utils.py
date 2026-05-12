@@ -8,6 +8,8 @@ import numpy.typing as npt
 import torch
 from einops import einsum, reduce
 
+from cs336_basics.tokenizer import Tokenizer
+
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     input_max = torch.max(x, dim, keepdim=True).values
@@ -112,3 +114,58 @@ def load_checkpoint(
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     return checkpoint["iteration"]
+
+
+# this function assumes the input is one string.
+def decoding(
+    model: torch.nn.Module,
+    prompts: str,
+    tokenizer: Tokenizer,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    device: str,
+) -> torch.Tensor:
+
+    input_ids = tokenizer.encode(prompts)
+    # the [input_ids] is to set the input's the batch dim as 1.
+    input_ids = torch.tensor([input_ids], dtype=torch.long, device=device)
+
+    eos_token_id = tokenizer.encode("<|endoftext|>")[0]
+
+    model.eval()
+    generated = input_ids
+
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
+            logits = model(generated)
+            next_token_logits = logits[:, -1, :]
+
+            if temperature == 0.0:
+                next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+            else:
+                next_token_logits = next_token_logits / temperature
+
+                probs = softmax(next_token_logits, dim=-1)
+
+                if top_p < 1.0:
+                    sorted, indices = torch.sort(probs, dim=-1, descending=True)
+                    sum = 0.0
+                    i = 0
+                    while sum < top_p:
+                        sum += sorted[:, i].item()
+                        i += 1
+
+                    next_token_indice = torch.multinomial(sorted[:, 0:i], num_samples=1)
+                    next_token = torch.gather(indices, -1, next_token_indice)
+                else:
+                    next_token = torch.multinomial(probs, num_samples=1)
+
+            if next_token == eos_token_id:
+                break
+
+            # append the new token
+            generated = torch.cat((generated, next_token), dim=-1)
+
+    output_text = tokenizer.decode(generated[0].tolist())
+    return output_text
