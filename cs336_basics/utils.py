@@ -116,10 +116,20 @@ def load_checkpoint(
     return checkpoint["iteration"]
 
 
+def top_p_filtering(token_logits: torch.Tensor, top_p: float):
+    sorted_logits, sorted_indices = torch.sort(token_logits, dim=-1, descending=True)
+    probs = softmax(sorted_logits, dim=-1)
+    cumulative_probs = torch.cumsum(probs, dim=-1)
+    mask = (cumulative_probs - probs) >= top_p
+    sorted_logits = sorted_logits.masked_fill(mask, float("-inf"))
+    logits = sorted_logits.scatter(dim=-1, index=sorted_indices, src=sorted_logits)
+    return logits
+
+
 # this function assumes the input is one string.
 def decoding(
     model: torch.nn.Module,
-    prompts: str,
+    prompt: str,
     tokenizer: Tokenizer,
     max_new_tokens: int,
     temperature: float,
@@ -127,7 +137,7 @@ def decoding(
     device: str,
 ) -> torch.Tensor:
 
-    input_ids = tokenizer.encode(prompts)
+    input_ids = tokenizer.encode(prompt)
     # the [input_ids] is to set the input's the batch dim as 1.
     input_ids = torch.tensor([input_ids], dtype=torch.long, device=device)
 
@@ -146,22 +156,14 @@ def decoding(
             else:
                 next_token_logits = next_token_logits / temperature
 
+                if 0.0 < top_p < 1.0:
+                    next_token_logits = top_p_filtering(next_token_logits, top_p)
+
                 probs = softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
 
-                if top_p < 1.0:
-                    sorted, indices = torch.sort(probs, dim=-1, descending=True)
-                    sum = 0.0
-                    i = 0
-                    while sum < top_p:
-                        sum += sorted[:, i].item()
-                        i += 1
-
-                    next_token_indice = torch.multinomial(sorted[:, 0:i], num_samples=1)
-                    next_token = torch.gather(indices, -1, next_token_indice)
-                else:
-                    next_token = torch.multinomial(probs, num_samples=1)
-
-            if next_token == eos_token_id:
+            # Stop BEFORE appending — we don't want <|endoftext|> in the output
+            if next_token.item() == eos_token_id:
                 break
 
             # append the new token
@@ -169,3 +171,49 @@ def decoding(
 
     output_text = tokenizer.decode(generated[0].tolist())
     return output_text
+
+
+# this function assumes the input is batch of tokens.
+def decoding_batch(
+    model: torch.nn.Module,
+    prompt_ids: torch.Tensor,
+    tokenizer: Tokenizer,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    device: str,
+) -> torch.Tensor:
+
+    eos_token_id = tokenizer.encode("<|endoftext|>")[0]
+    batch_size = prompt_ids.shape[0]
+
+    model.eval()
+    generated = prompt_ids.clone().to(device)
+
+    with torch.no_grad():
+        finished = torch.zeros((batch_size, 1), device=device, dtype=torch.bool)
+        for _ in range(max_new_tokens):
+            logits = model(generated)
+            next_token_logits = logits[:, -1, :]
+
+            if temperature == 0.0:
+                next_token = next_token_logits.argmax(dim=-1, keepdim=True)
+            else:
+                next_token_logits = next_token_logits / temperature
+
+                if 0.0 < top_p < 1.0:
+                    next_token_logits = top_p_filtering(next_token_logits, top_p)
+
+                probs = softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            next_token = next_token.masked_fill(finished, eos_token_id)
+            finished = finished | (next_token == eos_token_id)
+
+            # append the new token
+            generated = torch.cat((generated, next_token), dim=-1)
+
+            if torch.all(finished):
+                break
+
+    return generated
